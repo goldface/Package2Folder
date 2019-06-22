@@ -1,14 +1,13 @@
-﻿#define UNITY_5_3_PLUS
+﻿// new argument was added in 19.1.4
 
-#if UNITY_4_5 || UNITY_4_6 || UNITY_4_7 || UNITY_4_8 || UNITY_4_9 || UNITY_5_0 || UNITY_5_1 || UNITY_5_2
-#undef UNITY_5_3_PLUS
+#if UNITY_2019_1_OR_NEWER && !UNITY_2019_1_0 && !UNITY_2019_1_1 && !UNITY_2019_1_2 && !UNITY_2019_1_3
+#define CS_P2F_NEW_ARGUMENT
 #endif
 
 using System;
 using System.IO;
 using System.Reflection;
 using UnityEditor;
-using Object = UnityEngine.Object;
 
 namespace CodeStage.PackageToFolder
 {
@@ -20,55 +19,11 @@ namespace CodeStage.PackageToFolder
 
 		#region reflection stuff
 
-#if !UNITY_5_3_PLUS
-		private delegate AssetsItem[] ImportPackageStep1Delegate(string packagePath, out string packageIconPath);
-
-		private static Type assetServerType;
-		private static Type AssetServerType
-		{
-			get
-			{
-				if (assetServerType == null)
-				{
-					assetServerType = typeof(MenuItem).Assembly.GetType("UnityEditor.AssetServer");
-				}
-
-				return assetServerType;
-			}
-		}
-
-		private static ImportPackageStep1Delegate importPackageStep1;
-		private static ImportPackageStep1Delegate ImportPackageStep1
-		{
-			get
-			{
-				if (importPackageStep1 == null)
-				{
-					 importPackageStep1 = (ImportPackageStep1Delegate)Delegate.CreateDelegate(
-						typeof(ImportPackageStep1Delegate),
-						null,
-						AssetServerType.GetMethod("ImportPackageStep1"));
-				}
-
-				return importPackageStep1;
-			}
-		}
-
-		private static MethodInfo importPackageStep2MethodInfo;
-		private static MethodInfo ImportPackageStep2MethodInfo
-		{
-			get
-			{
-				if (importPackageStep2MethodInfo == null)
-				{
-					importPackageStep2MethodInfo = AssetServerType.GetMethod("ImportPackageStep2");
-				}
-
-				return importPackageStep2MethodInfo;
-			}
-		}
-#else
+#if CS_P2F_NEW_ARGUMENT
 		private delegate object[] ExtractAndPrepareAssetListDelegate(string packagePath, out string packageIconPath, out bool allowReInstall, out string packageManagerDependenciesPath);
+#else
+		private delegate object[] ExtractAndPrepareAssetListDelegate(string packagePath, out string packageIconPath, out bool allowReInstall);
+#endif
 
 		private static Type packageUtilityType;
 		private static Type PackageUtilityType
@@ -90,10 +45,16 @@ namespace CodeStage.PackageToFolder
 			{
 				if (extractAndPrepareAssetList == null)
 				{
+					var method = PackageUtilityType.GetMethod("ExtractAndPrepareAssetList");
+					if (method == null)
+					{
+						throw new Exception("Couldn't extract method with ExtractAndPrepareAssetListDelegate delegate!");
+					}
+
 					extractAndPrepareAssetList = (ExtractAndPrepareAssetListDelegate)Delegate.CreateDelegate(
 					   typeof(ExtractAndPrepareAssetListDelegate),
 					   null,
-					   PackageUtilityType.GetMethod("ExtractAndPrepareAssetList"));
+					   method);
 				}
 
 				return extractAndPrepareAssetList;
@@ -107,7 +68,7 @@ namespace CodeStage.PackageToFolder
 			{
 				if (destinationAssetPathFieldInfo == null)
 				{
-					Type importPackageItem = typeof(MenuItem).Assembly.GetType("UnityEditor.ImportPackageItem");
+					var importPackageItem = typeof(MenuItem).Assembly.GetType("UnityEditor.ImportPackageItem");
 					destinationAssetPathFieldInfo = importPackageItem.GetField("destinationAssetPath");
 				}
 				return destinationAssetPathFieldInfo;
@@ -127,7 +88,6 @@ namespace CodeStage.PackageToFolder
 				return importPackageAssetsMethodInfo;
 			}
 		}
-#endif
 
 		private static MethodInfo showImportPackageMethodInfo;
 		private static MethodInfo ShowImportPackageMethodInfo
@@ -136,7 +96,7 @@ namespace CodeStage.PackageToFolder
 			{
 				if (showImportPackageMethodInfo == null)
 				{
-					Type packageImport = typeof(MenuItem).Assembly.GetType("UnityEditor.PackageImport");
+					var packageImport = typeof(MenuItem).Assembly.GetType("UnityEditor.PackageImport");
 					showImportPackageMethodInfo = packageImport.GetMethod("ShowImportPackage");
 				}
 
@@ -153,18 +113,18 @@ namespace CodeStage.PackageToFolder
 		[MenuItem("Assets/Import Package/Here...", true, 10)]
 		private static bool IsImportToFolderCheck()
 		{
-			string selectedFolderPath = GetSelectedFolderPath();
+			var selectedFolderPath = GetSelectedFolderPath();
 			return !string.IsNullOrEmpty(selectedFolderPath);
 		}
 
 		[MenuItem("Assets/Import Package/Here...", false, 10)]
 		private static void Package2FolderCommand()
 		{
-			string packagePath = EditorUtility.OpenFilePanel("Import package ...", "",  "unitypackage");
+			var packagePath = EditorUtility.OpenFilePanel("Import package ...", "",  "unitypackage");
 			if (string.IsNullOrEmpty(packagePath)) return;
 			if (!File.Exists(packagePath)) return;
 			
-			string selectedFolderPath = GetSelectedFolderPath();
+			var selectedFolderPath = GetSelectedFolderPath();
 			ImportPackageToFolder(packagePath, selectedFolderPath, true);
 		}
 
@@ -183,13 +143,17 @@ namespace CodeStage.PackageToFolder
 		{
 			string packageIconPath;
 			bool allowReInstall;
-			string packageManagerDependenciesPath;
 
-			object[] assetsItems = ExtractAssetsFromPackage(packagePath, out packageIconPath, out allowReInstall, out packageManagerDependenciesPath);
+#if CS_P2F_NEW_ARGUMENT
+			string packageManagerDependenciesPath;
+			var assetsItems = ExtractAndPrepareAssetList(packagePath, out packageIconPath, out allowReInstall, out packageManagerDependenciesPath);
+#else
+			var assetsItems = ExtractAndPrepareAssetList(packagePath, out packageIconPath, out allowReInstall);
+#endif
 
 			if (assetsItems == null) return;
 
-			foreach (object item in assetsItems)
+			foreach (var item in assetsItems)
 			{
 				ChangeAssetItemPath(item, selectedFolderPath);
 			}
@@ -204,47 +168,21 @@ namespace CodeStage.PackageToFolder
 			}
 		}
 
-		public static object[] ExtractAssetsFromPackage(string path, out string packageIconPath, out bool allowReInstall, out string packageManagerDependenciesPath)
-		{
-#if !UNITY_5_3_PLUS
-			AssetsItem[] array = ImportPackageStep1(path, out packageIconPath);
-			allowReInstall = false;
-			return array;
-#else
-			object[] array = ExtractAndPrepareAssetList(path, out packageIconPath, out allowReInstall, out packageManagerDependenciesPath);
-			return array;
-#endif
-		}
-
 		private static void ChangeAssetItemPath(object assetItem, string selectedFolderPath)
 		{
-#if !UNITY_5_3_PLUS
-			AssetsItem item = (AssetsItem)assetItem;
-			item.exportedAssetPath = selectedFolderPath + item.exportedAssetPath.Remove(0, 6);
-			item.pathName = selectedFolderPath + item.pathName.Remove(0, 6);
-#else
-			string destinationPath = (string)DestinationAssetPathFieldInfo.GetValue(assetItem);
+			var destinationPath = (string)DestinationAssetPathFieldInfo.GetValue(assetItem);
 			destinationPath = selectedFolderPath + destinationPath.Remove(0, 6);
 			DestinationAssetPathFieldInfo.SetValue(assetItem, destinationPath);
-#endif
 		}
 
 		public static void ShowImportPackageWindow(string path, object[] array, string packageIconPath, bool allowReInstall)
 		{
-#if !UNITY_5_3_PLUS
-			ShowImportPackageMethodInfo.Invoke(null, new object[] { path, array, packageIconPath });
-#else
 			ShowImportPackageMethodInfo.Invoke(null, new object[] { path, array, packageIconPath, allowReInstall });
-#endif
 		}
 
 		public static void ImportPackageSilently(object[] assetsItems)
 		{
-#if !UNITY_5_3_PLUS
-			ImportPackageStep2MethodInfo.Invoke(null, new object[] { assetsItems, false });
-#else
 			ImportPackageAssetsMethodInfo.Invoke(null, new object[] { assetsItems, false });
-#endif
 		}
 
 		///////////////////////////////////////////////////////////////
@@ -253,10 +191,10 @@ namespace CodeStage.PackageToFolder
 
 		private static string GetSelectedFolderPath()
 		{
-			Object obj = Selection.activeObject;
+			var obj = Selection.activeObject;
 			if (obj == null) return null;
 
-			string path = AssetDatabase.GetAssetPath(obj.GetInstanceID());
+			var path = AssetDatabase.GetAssetPath(obj.GetInstanceID());
 			return !Directory.Exists(path) ? null : path;
 		}
 	}
